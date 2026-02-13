@@ -1,83 +1,120 @@
 import type { OpenClawPluginApi, OpenClawPluginService } from "openclaw/plugin-sdk";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import ngrok from "@ngrok/ngrok";
+
+type OAuthCfg = {
+  enabled?: boolean;
+  provider?: "github" | "google";
+  allowedUsers?: string[];
+};
 
 type TunnelCfg = {
   enabled?: boolean;
   autoStart?: boolean;
   gatewayUrl?: string;
-  inspectAddr?: string;
   authtoken?: string;
   domain?: string;
+  oauth?: OAuthCfg;
 };
 
-let ngrokProc: ChildProcessWithoutNullStreams | null = null;
+type NgrokListener = {
+  url: () => string;
+  close: () => Promise<void> | void;
+};
+
+let listener: NgrokListener | null = null;
 let lastPublicUrl: string | null = null;
 
 function getCfg(api: OpenClawPluginApi): TunnelCfg {
   return (api.entry?.config ?? {}) as TunnelCfg;
 }
 
-function ngrokApiUrl(inspectAddr: string): string {
-  return `http://${inspectAddr.replace(/^https?:\/\//, "")}/api/tunnels`;
-}
+function buildTrafficPolicy(oauth: OAuthCfg | undefined): string | undefined {
+  if (!oauth?.enabled) return undefined;
 
-async function discoverPublicUrl(api: OpenClawPluginApi, inspectAddr: string): Promise<string | null> {
-  try {
-    const res = await fetch(ngrokApiUrl(inspectAddr));
-    if (!res.ok) return null;
-    const body = (await res.json()) as { tunnels?: Array<{ public_url?: string }> };
-    const url = body.tunnels?.find((t) => t.public_url?.startsWith("https://"))?.public_url ?? body.tunnels?.[0]?.public_url ?? null;
-    if (url) lastPublicUrl = url;
-    return url;
-  } catch (err) {
-    api.logger.warn(`gateway-ngrok: failed to query ngrok api: ${String(err)}`);
-    return null;
+  const provider = oauth.provider ?? "github";
+  const policy: {
+    on_http_request: Array<{
+      expressions?: string[];
+      actions: Array<{ type: string; config?: Record<string, unknown> }>;
+    }>;
+  } = {
+    on_http_request: [
+      {
+        actions: [
+          {
+            type: "oauth",
+            config: { provider },
+          },
+        ],
+      },
+    ],
+  };
+
+  const allowedUsers = (oauth.allowedUsers ?? []).map((x) => x.trim()).filter(Boolean);
+  if (allowedUsers.length > 0) {
+    const identityField = "actions.ngrok.oauth.identity.email";
+    const usersJson = JSON.stringify(allowedUsers);
+    const celExpr = `!(${identityField} in ${usersJson})`;
+
+    policy.on_http_request.push({
+      expressions: [celExpr],
+      actions: [
+        {
+          type: "custom-response",
+          config: {
+            status_code: 403,
+            content: `Access denied. Your account (\${${identityField}}) is not authorized.`,
+            headers: { "content-type": "text/plain" },
+          },
+        },
+      ],
+    });
   }
+
+  return JSON.stringify(policy);
 }
 
-function startTunnel(api: OpenClawPluginApi): string {
-  if (ngrokProc) return "already running";
+async function startTunnel(api: OpenClawPluginApi): Promise<string> {
+  if (listener) return "already running";
 
   const cfg = getCfg(api);
   if (cfg.enabled === false) return "disabled by config";
 
   const gatewayUrl = cfg.gatewayUrl ?? "http://127.0.0.1:18789";
-  const inspectAddr = cfg.inspectAddr ?? "127.0.0.1:4040";
+  const authtoken = cfg.authtoken?.trim();
+  if (!authtoken) {
+    return "missing authtoken (set plugins.entries.gateway-ngrok.config.authtoken)";
+  }
 
-  const args = ["http", gatewayUrl, "--log=stdout", "--log-format=json", `--api-addr=${inspectAddr}`];
-  if (cfg.authtoken && cfg.authtoken.trim()) args.push(`--authtoken=${cfg.authtoken.trim()}`);
-  if (cfg.domain && cfg.domain.trim()) args.push(`--domain=${cfg.domain.trim()}`);
+  const trafficPolicy = buildTrafficPolicy(cfg.oauth);
 
-  ngrokProc = spawn("ngrok", args, {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
-  });
+  const options: Record<string, unknown> = {
+    addr: gatewayUrl,
+    authtoken,
+  };
+  if (cfg.domain?.trim()) options.domain = cfg.domain.trim();
+  if (trafficPolicy) options.traffic_policy = trafficPolicy;
 
-  ngrokProc.stdout.on("data", (chunk) => {
-    const line = String(chunk);
-    if (line.includes("msg=\"started tunnel\"") || line.includes("started tunnel")) {
-      void discoverPublicUrl(api, inspectAddr).then((url) => {
-        if (url) api.logger.info(`gateway-ngrok: tunnel url ${url}`);
-      });
-    }
-  });
-
-  ngrokProc.stderr.on("data", (chunk) => {
-    api.logger.warn(`gateway-ngrok stderr: ${String(chunk).trim()}`);
-  });
-
-  ngrokProc.on("exit", (code, sig) => {
-    api.logger.warn(`gateway-ngrok exited code=${String(code)} sig=${String(sig)}`);
-    ngrokProc = null;
-  });
-
-  return `starting ngrok tunnel to ${gatewayUrl}`;
+  try {
+    const newListener = (await ngrok.forward(options)) as unknown as NgrokListener;
+    listener = newListener;
+    lastPublicUrl = newListener.url();
+    api.logger.info(`gateway-ngrok: tunnel url ${lastPublicUrl}`);
+    return `started (${lastPublicUrl})`;
+  } catch (err) {
+    const msg = String(err);
+    api.logger.error(`gateway-ngrok start failed: ${msg}`);
+    return `failed to start (${msg})`;
+  }
 }
 
-function stopTunnel(): string {
-  if (!ngrokProc) return "not running";
-  ngrokProc.kill("SIGTERM");
-  ngrokProc = null;
+async function stopTunnel(): Promise<string> {
+  if (!listener) return "not running";
+  try {
+    await listener.close();
+  } finally {
+    listener = null;
+  }
   return "stopped";
 }
 
@@ -87,11 +124,10 @@ export default function register(api: OpenClawPluginApi) {
     start: async () => {
       const cfg = getCfg(api);
       if (cfg.enabled === false || cfg.autoStart !== true) return;
-      api.logger.info(`gateway-ngrok: ${startTunnel(api)}`);
-      await discoverPublicUrl(api, cfg.inspectAddr ?? "127.0.0.1:4040");
+      api.logger.info(`gateway-ngrok: ${await startTunnel(api)}`);
     },
     stop: async () => {
-      stopTunnel();
+      await stopTunnel();
     },
   };
 
@@ -103,22 +139,24 @@ export default function register(api: OpenClawPluginApi) {
     acceptsArgs: true,
     handler: async (ctx) => {
       const action = (ctx.args ?? "status").trim().toLowerCase();
-      const cfg = getCfg(api);
-      const inspectAddr = cfg.inspectAddr ?? "127.0.0.1:4040";
 
       if (action === "start") {
-        return { text: `gateway tunnel: ${startTunnel(api)}` };
+        return { text: `gateway tunnel: ${await startTunnel(api)}` };
       }
       if (action === "stop") {
-        return { text: `gateway tunnel: ${stopTunnel()}` };
+        return { text: `gateway tunnel: ${await stopTunnel()}` };
       }
 
-      const url = (await discoverPublicUrl(api, inspectAddr)) ?? lastPublicUrl;
-      const running = ngrokProc ? "running" : "stopped";
-      const exposure = url ? `\nPublic URL: ${url}` : "\nPublic URL: unavailable";
+      const running = listener ? "running" : "stopped";
+      const publicUrl = listener?.url?.() ?? lastPublicUrl;
+      const exposure = publicUrl ? `\nPublic URL: ${publicUrl}` : "\nPublic URL: unavailable";
+      const oauthCfg = getCfg(api).oauth;
+      const oauthState = oauthCfg?.enabled ? `enabled (${oauthCfg.provider ?? "github"})` : "disabled";
+
       return {
         text:
           `gateway tunnel status: ${running}${exposure}` +
+          `\nOAuth policy: ${oauthState}` +
           "\nCommands: /gateway_tunnel start | /gateway_tunnel stop | /gateway_tunnel status",
       };
     },

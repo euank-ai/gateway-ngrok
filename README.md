@@ -1,6 +1,6 @@
 # gateway-ngrok
 
-OpenClaw plugin to expose a local gateway via ngrok.
+OpenClaw plugin to expose a local gateway via **ngrok JavaScript SDK** (no child process required).
 
 ## Commands
 
@@ -12,9 +12,18 @@ OpenClaw plugin to expose a local gateway via ngrok.
 
 - `autoStart` (bool)
 - `gatewayUrl` (default: `http://127.0.0.1:18789`)
-- `inspectAddr` (default: `127.0.0.1:4040`)
-- `authtoken` (ngrok token)
+- `authtoken` (required ngrok token)
 - `domain` (optional reserved domain)
+- `oauth.enabled` (bool)
+- `oauth.provider` (`github` or `google`)
+- `oauth.allowedUsers` (email allowlist; unauthorized users get HTTP 403)
+
+## OAuth policy behavior
+
+When `oauth.enabled=true`, the plugin applies an ngrok traffic policy:
+
+1. Enforce OAuth login (GitHub or Google)
+2. Optionally enforce an email allowlist using `actions.ngrok.oauth.identity.email`
 
 ## Security note
 
