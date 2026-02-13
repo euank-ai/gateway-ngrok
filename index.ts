@@ -13,6 +13,7 @@ type TunnelCfg = {
   gatewayUrl?: string;
   authtoken?: string;
   domain?: string;
+  endpointUrl?: string;
   oauth?: OAuthCfg;
 };
 
@@ -92,7 +93,8 @@ async function startTunnel(api: OpenClawPluginApi): Promise<string> {
     addr: gatewayUrl,
     authtoken,
   };
-  if (cfg.domain?.trim()) options.domain = cfg.domain.trim();
+  const domain = cfg.endpointUrl?.trim() || cfg.domain?.trim();
+  if (domain) options.domain = domain;
   if (trafficPolicy) options.traffic_policy = trafficPolicy;
 
   try {
