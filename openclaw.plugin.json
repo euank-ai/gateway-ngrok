@@ -1,0 +1,24 @@
+{
+  "id": "gateway-ngrok",
+  "name": "Gateway ngrok Tunnel",
+  "description": "Expose local OpenClaw gateway over ngrok and provide status/URL commands.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "autoStart": { "type": "boolean", "default": false },
+      "gatewayUrl": { "type": "string", "default": "http://127.0.0.1:18789" },
+      "inspectAddr": { "type": "string", "default": "127.0.0.1:4040" },
+      "authtoken": { "type": "string" },
+      "domain": { "type": "string" }
+    }
+  },
+  "uiHints": {
+    "authtoken": { "label": "ngrok Auth Token", "sensitive": true },
+    "autoStart": { "label": "Auto-start tunnel on gateway startup" },
+    "gatewayUrl": { "label": "Local gateway URL" },
+    "inspectAddr": { "label": "ngrok API address" },
+    "domain": { "label": "Reserved ngrok domain (optional)" }
+  }
+}
