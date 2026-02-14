@@ -92,7 +92,10 @@ async function startTunnel(api: OpenClawPluginApi): Promise<string> {
   if (domain) options.domain = domain;
   if (trafficPolicy) options.traffic_policy = trafficPolicy;
 
+  api.logger.info(`gateway-ngrok: forward options=${JSON.stringify({...options, authtoken: "***"})}`);
   try {
+    // Kill any stale ngrok sessions from prior process restarts
+    await ngrok.kill();
     const newListener = await ngrok.forward(options);
     listener = newListener;
     lastPublicUrl = newListener.url();
