@@ -17,7 +17,8 @@ type TunnelCfg = {
   oauth?: OAuthCfg;
 };
 
-let listener: ngrok.Listener | null = null;
+let session: ngrok.Session | null = null;
+let activeListener: ngrok.Listener | null = null;
 let lastPublicUrl: string | null = null;
 
 function getCfg(api: OpenClawPluginApi): TunnelCfg {
@@ -71,7 +72,7 @@ function buildTrafficPolicy(oauth: OAuthCfg | undefined): string | undefined {
 }
 
 async function startTunnel(api: OpenClawPluginApi): Promise<string> {
-  if (listener) return "already running";
+  if (activeListener) return "already running";
 
   const cfg = getCfg(api);
   if (cfg.enabled === false) return "disabled by config";
@@ -82,23 +83,31 @@ async function startTunnel(api: OpenClawPluginApi): Promise<string> {
     return "missing authtoken (set plugins.entries.gateway-ngrok.config.authtoken)";
   }
 
+  const domain = cfg.endpointUrl?.trim() || cfg.domain?.trim();
   const trafficPolicy = buildTrafficPolicy(cfg.oauth);
 
-  const options: Record<string, unknown> = {
-    addr: gatewayUrl,
-    authtoken,
-  };
-  const domain = cfg.endpointUrl?.trim() || cfg.domain?.trim();
-  if (domain) options.domain = domain;
-  if (trafficPolicy) options.traffic_policy = trafficPolicy;
-
-  api.logger.info(`gateway-ngrok: forward options=${JSON.stringify({...options, authtoken: "***"})}`);
   try {
-    // Kill any stale ngrok sessions from prior process restarts
-    await ngrok.kill();
-    const newListener = await ngrok.forward(options);
-    listener = newListener;
-    lastPublicUrl = newListener.url();
+    // Clean up any stale sessions
+    await ngrok.kill().catch(() => {});
+
+    // Build session
+    session = await new ngrok.SessionBuilder()
+      .authtoken(authtoken)
+      .connect();
+
+    // Build HTTP endpoint listener
+    const builder = session.httpEndpoint();
+    if (domain) builder.domain(domain);
+    if (trafficPolicy) builder.trafficPolicy(trafficPolicy);
+
+    activeListener = await builder.listen();
+
+    // Parse host:port from gateway URL
+    const url = new URL(gatewayUrl);
+    const forwardAddr = `${url.hostname}:${url.port || "80"}`;
+    activeListener.forward(forwardAddr);
+
+    lastPublicUrl = activeListener.url();
     api.logger.info(`gateway-ngrok: tunnel url ${lastPublicUrl}`);
     return `started (${lastPublicUrl})`;
   } catch (err) {
@@ -109,11 +118,12 @@ async function startTunnel(api: OpenClawPluginApi): Promise<string> {
 }
 
 async function stopTunnel(): Promise<string> {
-  if (!listener) return "not running";
+  if (!activeListener) return "not running";
   try {
-    await listener.close();
+    await activeListener.close();
   } finally {
-    listener = null;
+    activeListener = null;
+    session = null;
   }
   return "stopped";
 }
@@ -122,7 +132,6 @@ export default function register(api: OpenClawPluginApi) {
   api.logger.info("gateway-ngrok: register() called");
 
   const cfg = getCfg(api);
-  api.logger.info(`gateway-ngrok: cfg=${JSON.stringify({ enabled: cfg.enabled, autoStart: cfg.autoStart, hasAuthtoken: !!cfg.authtoken, endpointUrl: cfg.endpointUrl, oauthEnabled: cfg.oauth?.enabled })}`);
   if (cfg.enabled !== false && cfg.autoStart === true) {
     api.logger.info("gateway-ngrok: autoStart enabled, starting tunnel...");
     startTunnel(api)
@@ -133,7 +142,6 @@ export default function register(api: OpenClawPluginApi) {
   const service: OpenClawPluginService = {
     id: "gateway-ngrok-service",
     start: async () => {
-      api.logger.info("gateway-ngrok: service start() called");
       const innerCfg = getCfg(api);
       if (innerCfg.enabled === false || innerCfg.autoStart !== true) return;
       try {
@@ -164,8 +172,8 @@ export default function register(api: OpenClawPluginApi) {
         return { text: `gateway tunnel: ${await stopTunnel()}` };
       }
 
-      const running = listener ? "running" : "stopped";
-      const publicUrl = listener?.url?.() ?? lastPublicUrl;
+      const running = activeListener ? "running" : "stopped";
+      const publicUrl = activeListener?.url?.() ?? lastPublicUrl;
       const exposure = publicUrl ? `\nPublic URL: ${publicUrl}` : "\nPublic URL: unavailable";
       const oauthCfg = getCfg(api).oauth;
       const oauthState = oauthCfg?.enabled ? `enabled (${oauthCfg.provider ?? "github"})` : "disabled";
