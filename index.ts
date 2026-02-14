@@ -21,7 +21,7 @@ let listener: ngrok.Listener | null = null;
 let lastPublicUrl: string | null = null;
 
 function getCfg(api: OpenClawPluginApi): TunnelCfg {
-  return (api.entry?.config ?? {}) as TunnelCfg;
+  return ((api as any).pluginConfig ?? (api as any).config ?? {}) as TunnelCfg;
 }
 
 function buildTrafficPolicy(oauth: OAuthCfg | undefined): string | undefined {
@@ -118,16 +118,21 @@ async function stopTunnel(): Promise<string> {
 export default function register(api: OpenClawPluginApi) {
   api.logger.info("gateway-ngrok: register() called");
 
+  const cfg = getCfg(api);
+  api.logger.info(`gateway-ngrok: cfg=${JSON.stringify({ enabled: cfg.enabled, autoStart: cfg.autoStart, hasAuthtoken: !!cfg.authtoken, endpointUrl: cfg.endpointUrl, oauthEnabled: cfg.oauth?.enabled })}`);
+  if (cfg.enabled !== false && cfg.autoStart === true) {
+    api.logger.info("gateway-ngrok: autoStart enabled, starting tunnel...");
+    startTunnel(api)
+      .then((result) => api.logger.info(`gateway-ngrok: ${result}`))
+      .catch((err) => api.logger.error(`gateway-ngrok auto-start error: ${String(err)}`));
+  }
+
   const service: OpenClawPluginService = {
     id: "gateway-ngrok-service",
     start: async () => {
       api.logger.info("gateway-ngrok: service start() called");
-      const cfg = getCfg(api);
-      api.logger.info(`gateway-ngrok: cfg=${JSON.stringify({ enabled: cfg.enabled, autoStart: cfg.autoStart, hasAuthtoken: !!cfg.authtoken, endpointUrl: cfg.endpointUrl, oauthEnabled: cfg.oauth?.enabled })}`);
-      if (cfg.enabled === false || cfg.autoStart !== true) {
-        api.logger.info(`gateway-ngrok: skipping (enabled=${cfg.enabled}, autoStart=${cfg.autoStart})`);
-        return;
-      }
+      const innerCfg = getCfg(api);
+      if (innerCfg.enabled === false || innerCfg.autoStart !== true) return;
       try {
         const result = await startTunnel(api);
         api.logger.info(`gateway-ngrok: ${result}`);
