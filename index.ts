@@ -1,6 +1,5 @@
 import type { OpenClawPluginApi, OpenClawPluginService } from "openclaw/plugin-sdk";
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const ngrok = require("@ngrok/ngrok") as typeof import("@ngrok/ngrok");
+import ngrok from "@ngrok/ngrok";
 
 type OAuthCfg = {
   enabled?: boolean;
@@ -18,12 +17,7 @@ type TunnelCfg = {
   oauth?: OAuthCfg;
 };
 
-type NgrokListener = {
-  url: () => string;
-  close: () => Promise<void> | void;
-};
-
-let listener: NgrokListener | null = null;
+let listener: ngrok.Listener | null = null;
 let lastPublicUrl: string | null = null;
 
 function getCfg(api: OpenClawPluginApi): TunnelCfg {
@@ -99,7 +93,7 @@ async function startTunnel(api: OpenClawPluginApi): Promise<string> {
   if (trafficPolicy) options.traffic_policy = trafficPolicy;
 
   try {
-    const newListener = (await ngrok.forward(options)) as unknown as NgrokListener;
+    const newListener = await ngrok.forward(options);
     listener = newListener;
     lastPublicUrl = newListener.url();
     api.logger.info(`gateway-ngrok: tunnel url ${lastPublicUrl}`);
@@ -123,14 +117,13 @@ async function stopTunnel(): Promise<string> {
 
 export default function register(api: OpenClawPluginApi) {
   api.logger.info("gateway-ngrok: register() called");
-  api.logger.info(`gateway-ngrok: ngrok module loaded: ${typeof ngrok?.forward}`);
 
   const service: OpenClawPluginService = {
     id: "gateway-ngrok-service",
     start: async () => {
-      api.logger.info(`gateway-ngrok: service start() called`);
+      api.logger.info("gateway-ngrok: service start() called");
       const cfg = getCfg(api);
-      api.logger.info(`gateway-ngrok: cfg=${JSON.stringify({enabled: cfg.enabled, autoStart: cfg.autoStart, hasAuthtoken: !!cfg.authtoken, endpointUrl: cfg.endpointUrl, oauthEnabled: cfg.oauth?.enabled})}`);
+      api.logger.info(`gateway-ngrok: cfg=${JSON.stringify({ enabled: cfg.enabled, autoStart: cfg.autoStart, hasAuthtoken: !!cfg.authtoken, endpointUrl: cfg.endpointUrl, oauthEnabled: cfg.oauth?.enabled })}`);
       if (cfg.enabled === false || cfg.autoStart !== true) {
         api.logger.info(`gateway-ngrok: skipping (enabled=${cfg.enabled}, autoStart=${cfg.autoStart})`);
         return;
