@@ -131,8 +131,19 @@ async function stopTunnel(): Promise<string> {
 export default function register(api: OpenClawPluginApi) {
   api.logger.info("gateway-ngrok: register() called");
 
-  // Auto-start is handled in service.start() — not here in register(),
-  // because register() also runs for CLI invocations.
+  // Only auto-start when running as the gateway daemon, not from CLI commands.
+  // Detect by checking if process was started as the gateway service.
+  const isGateway = process.argv.some((a) => a.includes("gateway")) ||
+    (process.env.OPENCLAW_GATEWAY === "1") ||
+    (!process.argv.some((a) => a === "plugins" || a === "pairing" || a === "logs" || a === "status" || a === "doctor"));
+  const cfg = getCfg(api);
+  api.logger.info(`gateway-ngrok: isGateway=${isGateway}, argv=${process.argv.slice(1).join(" ")}`);
+  if (isGateway && cfg.enabled !== false && cfg.autoStart === true) {
+    api.logger.info("gateway-ngrok: autoStart enabled, starting tunnel...");
+    startTunnel(api)
+      .then((result) => api.logger.info(`gateway-ngrok: ${result}`))
+      .catch((err) => api.logger.error(`gateway-ngrok auto-start error: ${String(err)}`));
+  }
 
   const service: OpenClawPluginService = {
     id: "gateway-ngrok-service",

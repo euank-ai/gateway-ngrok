@@ -1,7 +1,13 @@
 {
-  "name": "@local/gateway-ngrok",
-  "version": "0.0.2",
-  "private": true,
+  "name": "@euank-ai/gateway-ngrok",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin to expose a local gateway via ngrok with optional OAuth traffic policy.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/euank-ai/gateway-ngrok"
+  },
+  "keywords": ["openclaw", "ngrok", "tunnel", "plugin"],
   "dependencies": {
     "@ngrok/ngrok": "^1.5.1"
   },
