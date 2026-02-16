@@ -12,7 +12,6 @@ type TunnelCfg = {
   autoStart?: boolean;
   gatewayUrl?: string;
   authtoken?: string;
-  domain?: string;
   endpointUrl?: string;
   oauth?: OAuthCfg;
 };
@@ -83,7 +82,9 @@ async function startTunnel(api: OpenClawPluginApi): Promise<string> {
     return "missing authtoken (set plugins.entries.gateway-ngrok.config.authtoken)";
   }
 
-  const domain = cfg.endpointUrl?.trim() || cfg.domain?.trim();
+  // Extract domain from endpointUrl (e.g. "https://foo.ngrok.app" → "foo.ngrok.app")
+  const endpointUrl = cfg.endpointUrl?.trim();
+  const domain = endpointUrl ? new URL(endpointUrl).hostname : undefined;
   const trafficPolicy = buildTrafficPolicy(cfg.oauth);
 
   try {

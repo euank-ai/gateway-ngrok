@@ -17,7 +17,6 @@ Add to your `openclaw.json` under `plugins.entries`:
         "config": {
           "autoStart": true,
           "authtoken": "<your-ngrok-authtoken>",
-          "domain": "your-domain.ngrok.app",
           "endpointUrl": "https://your-domain.ngrok.app",
           "gatewayUrl": "http://127.0.0.1:18789",
           "oauth": {
@@ -59,8 +58,7 @@ git clone https://github.com/euank-ai/gateway-ngrok.git
 | `autoStart` | bool | `false` | Start tunnel automatically on gateway boot |
 | `gatewayUrl` | string | `http://127.0.0.1:18789` | Local gateway URL to forward to |
 | `authtoken` | string | *required* | Your ngrok authtoken |
-| `domain` | string | — | Reserved ngrok domain (e.g. `foo.ngrok.app`) |
-| `endpointUrl` | string | — | Public URL (for display/logging) |
+| `endpointUrl` | string | — | Public endpoint URL (e.g. `https://foo.ngrok.app`). Domain is extracted automatically. |
 | `oauth.enabled` | bool | `false` | Enable OAuth on the tunnel endpoint |
 | `oauth.provider` | string | `google` | OAuth provider (`google` or `github`) |
 | `oauth.allowedUsers` | string[] | `[]` | Email allowlist; empty = allow all authenticated users |
