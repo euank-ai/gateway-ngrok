@@ -41,6 +41,14 @@ function buildTrafficPolicy(oauth: OAuthCfg | undefined): string | undefined {
             type: "oauth",
             config: { provider },
           },
+          {
+            type: "add-headers",
+            config: {
+              headers: {
+                "x-forwarded-user": "${actions.ngrok.oauth.identity.email}",
+              },
+            },
+          },
         ],
       },
     ],
